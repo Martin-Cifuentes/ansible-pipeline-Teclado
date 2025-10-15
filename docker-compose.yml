@@ -1,56 +1,158 @@
-version: "3"
 services:
-  jenkins:
-    image: madmilodz/jenkinsci:v3
-    container_name: jenkins
+  # ============================================
+  # PostgreSQL - Base de datos para SonarQube
+  # ============================================
+  db:
+    image: postgres:13-alpine
+    container_name: postgres
+    restart: unless-stopped
     environment:
-      - DOCKER_HOST=tcp://localhost:2375
-      - JENKINS_UC=http://updates.jenkins.io
-      - JENKINS_UC_EXPERIMENTAL=http://updates.jenkins.io/experimental
-      - JENKINS_INCREMENTALS_REPO_MIRROR=http://repo.jenkins-ci.org/incrementals
-      - JAVA_OPTS=-Djenkins.install.runSetupWizard=false
-    user: root
+      POSTGRES_USER: sonar
+      POSTGRES_PASSWORD: sonar
+      POSTGRES_DB: sonar
     ports:
-      - "80:8080"
-      - "8443:8443"
-      - "50000:50000"
-    expose:
-      - "8080"
+      - "5432:5432"
     volumes:
-      - jenkins-data:/var/jenkins_home
-      - jenkins-home:/home
+      - postgresql:/var/lib/postgresql
+      - postgresql_data:/var/lib/postgresql/data
+    networks:
+      - devops-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sonar"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
+  # ============================================
+  # SonarQube - Análisis de código
+  # ============================================
   sonarqube:
-    image: sonarqube:8.2-community
+    image: sonarqube:lts-community
     container_name: sonarqube
+    restart: unless-stopped
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     ports:
       - "9000:9000"
     environment:
-      - sonar.jdbc.url=jdbc:postgresql://db:5432/sonar
-      - sonar.jdbc.username=sonar
-      - sonar.jdbc.password=sonar
+      SONAR_JDBC_URL: jdbc:postgresql://db:5432/sonar
+      SONAR_JDBC_USERNAME: sonar
+      SONAR_JDBC_PASSWORD: sonar
+      SONAR_ES_BOOTSTRAP_CHECKS_DISABLE: "true"
     volumes:
-      - sonarqube_conf:/opt/sonarqube/conf
       - sonarqube_data:/opt/sonarqube/data
       - sonarqube_extensions:/opt/sonarqube/extensions
+      - sonarqube_logs:/opt/sonarqube/logs
+    networks:
+      - devops-network
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9000/api/system/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
 
-  db:
-    image: postgres
+  # ============================================
+  # Jenkins - CI/CD Server con Plugins
+  # ============================================
+  jenkins:
+    image: jenkins/jenkins:lts
+    container_name: jenkins
+    restart: unless-stopped
+    user: root
+    ports:
+      - "8080:8080"
+      - "50000:50000"
     environment:
-      - POSTGRES_USER=sonar
-      - POSTGRES_PASSWORD=sonar
+      JAVA_OPTS: >-
+        -Djenkins.install.runSetupWizard=false
+        -Dhudson.security.csrf.DefaultCrumbIssuer.EXCLUDE_SESSION_ID=true
+      JENKINS_ADMIN_ID: admin
+      JENKINS_ADMIN_PASSWORD: admin
     volumes:
-      - postgresql:/var/lib/postgresql
-      # This needs explicit mapping due to https://github.com/docker-library/postgres/blob/4e48e3228a30763913ece952c611e5e9b95c8759/Dockerfile.template#L52
-      - postgresql_data:/var/lib/postgresql/data
+      - jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /usr/bin/docker:/usr/bin/docker
+    networks:
+      - devops-network
+    entrypoint: /bin/bash
+    command: >
+      -c "
+      echo '🔧 Instalando Docker CLI en Jenkins...';
+      apt-get update > /dev/null 2>&1;
+      apt-get install -y docker.io curl > /dev/null 2>&1;
+      echo '📦 Instalando plugins de Jenkins...';
+      jenkins-plugin-cli --plugins \
+        workflow-aggregator \
+        git \
+        github \
+        pipeline-github-lib \
+        pipeline-stage-view \
+        blueocean \
+        sonar \
+        ssh-agent \
+        credentials-binding \
+        pipeline-model-definition \
+        pipeline-groovy-lib \
+        docker-workflow \
+        docker-plugin \
+        cloudbees-folder \
+        timestamper \
+        ws-cleanup \
+        antisamy-markup-formatter \
+        build-timeout \
+        credentials \
+        plain-credentials \
+        ssh-credentials \
+        credentials-binding \
+        scm-api \
+        workflow-cps \
+        workflow-job \
+        apache-httpcomponents-client-4-api \
+        display-url-api \
+        mailer \
+        junit \
+        matrix-auth \
+        pam-auth \
+        ldap \
+        email-ext \
+        matrix-project;
+      echo '✅ Plugins instalados correctamente';
+      echo '🚀 Iniciando Jenkins...';
+      /usr/local/bin/jenkins.sh
+      "
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/login || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
 
+# ============================================
+# Volúmenes persistentes
+# ============================================
 volumes:
-  jenkins-data: {}
-  jenkins-home: {}
-  sonarqube_conf: {}
-  sonarqube_data: {}
-  sonarqube_extensions: {}
-  postgresql: {}
-  postgresql_data: {}
+  jenkins_home:
+    driver: local
+  sonarqube_data:
+    driver: local
+  sonarqube_extensions:
+    driver: local
+  sonarqube_logs:
+    driver: local
+  postgresql:
+    driver: local
+  postgresql_data:
+    driver: local
+
+# ============================================
+# Red personalizada
+# ============================================
+networks:
+  devops-network:
+    driver: bridge

@@ -1,11 +1,70 @@
 ---
-- name: Instalar y configurar Nginx
+# ============================================
+# Playbook 1: Configurar VM de Nginx
+# ============================================
+- name: Configurar VM Nginx (Aplicación Web)
   hosts: nginx
   become: true
+  
   tasks:
-    - name: Actualizar cache de paquetes
+    - name: Actualizar cache de paquetes APT
       apt:
         update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Instalar Docker y dependencias
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+        state: present
+
+    - name: Crear directorio para keyring de Docker
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Agregar clave GPG de Docker
+      shell: |
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+      args:
+        creates: /etc/apt/keyrings/docker.gpg
+
+    - name: Agregar repositorio de Docker
+      shell: |
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+      args:
+        creates: /etc/apt/sources.list.d/docker.list
+
+    - name: Actualizar cache después de agregar repo Docker
+      apt:
+        update_cache: yes
+
+    - name: Instalar Docker Engine
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+
+    - name: Añadir usuario al grupo docker
+      user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: yes
+
+    - name: Habilitar y arrancar servicio Docker
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
 
     - name: Instalar Nginx
       apt:
@@ -25,87 +84,182 @@
         group: "{{ ansible_user }}"
         recurse: yes
 
-- name: Instalación de Docker y Docker Compose en Ubuntu
+    - name: Crear página de bienvenida personalizada
+      copy:
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>DevOps Pipeline - VM Nginx</title>
+              <style>
+                  body { font-family: Arial; text-align: center; padding: 50px; background: #f0f0f0; }
+                  h1 { color: #009639; }
+                  .status { background: white; padding: 20px; border-radius: 10px; margin: 20px auto; max-width: 600px; }
+              </style>
+          </head>
+          <body>
+              <h1>🚀 VM Nginx Configurada Exitosamente</h1>
+              <div class="status">
+                  <h2>✅ Servicios Instalados:</h2>
+                  <p>✓ Docker Engine</p>
+                  <p>✓ Docker Compose Plugin</p>
+                  <p>✓ Nginx Web Server</p>
+                  <p><strong>Estado:</strong> Operacional</p>
+              </div>
+          </body>
+          </html>
+        dest: /var/www/html/index.html
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+
+# ============================================
+# Playbook 2: Configurar VM de Jenkins (CI/CD)
+# ============================================
+- name: Configurar VM Jenkins (CI/CD + SonarQube)
   hosts: jenkins
   become: true
   
   tasks:
-    # Actualizar el cache de paquetes
-    - name: Actualizar el cache de paquetes
+    - name: Actualizar cache de paquetes APT
       apt:
         update_cache: yes
+        cache_valid_time: 3600
 
-    # Instalar dependencias para Docker
-    - name: Instalar dependencias para Docker
+    - name: Instalar dependencias necesarias
       apt:
-        name: 
+        name:
           - apt-transport-https
           - ca-certificates
           - curl
-          - gnupg-agent
-          - software-properties-common
-
-    # Agregar la clave GPG oficial de Docker
-    - name: Agregar la clave GPG oficial de Docker
-      apt_key:
-        url: https://download.docker.com/linux/ubuntu/gpg
+          - gnupg
+          - lsb-release
+          - python3-pip
         state: present
 
-    # Agregar el repositorio de Docker al sources.list.d
-    - name: Agregar el repositorio de Docker al sources.list.d
-      apt_repository:
-        repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_lsb.codename }} stable
-        state: present
+    - name: Crear directorio para keyring de Docker
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
 
-    # Actualizar el cache de paquetes de nuevo (para que encuentre el paquete de Docker)
-    - name: Actualizar el cache de paquetes de nuevo (para que encuentre el paquete de Docker)
+    - name: Agregar clave GPG de Docker
+      shell: |
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+      args:
+        creates: /etc/apt/keyrings/docker.gpg
+
+    - name: Agregar repositorio de Docker
+      shell: |
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+      args:
+        creates: /etc/apt/sources.list.d/docker.list
+
+    - name: Actualizar cache después de agregar repo Docker
       apt:
         update_cache: yes
 
-    # Instalar Docker
-    - name: Instalar Docker
+    - name: Instalar Docker Engine y Docker Compose
       apt:
-        name: docker-ce
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
         state: present
 
-    # Añadir el usuario actual al grupo de Docker
-    - name: Añadir el usuario actual al grupo de Docker
+    - name: Añadir usuario al grupo docker
       user:
         name: "{{ ansible_user }}"
         groups: docker
         append: yes
 
-    # Instalar Docker Compose
-    - name: Instalar Docker Compose
-      shell: |
-        curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-        chmod +x /usr/local/bin/docker-compose
-      args:
-        creates: /usr/local/bin/docker-compose
-    
-    - name: Establecer vm.max_map_count en el kernel
+    - name: Habilitar y arrancar servicio Docker
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Configurar vm.max_map_count para SonarQube
       sysctl:
         name: vm.max_map_count
         value: "262144"
         state: present
         reload: yes
-    
-    - name: Copiar archivo de configuración de Nginx
+
+    - name: Configurar fs.file-max para SonarQube
+      sysctl:
+        name: fs.file-max
+        value: "65536"
+        state: present
+        reload: yes
+
+    - name: Crear directorio para docker-compose
+      file:
+        path: /home/{{ ansible_user }}/devops
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+
+    - name: Copiar docker-compose.yml
       copy:
         src: docker-compose.yml
-        dest: /home/{{ ansible_user }}/docker-compose.yml
+        dest: /home/{{ ansible_user }}/devops/docker-compose.yml
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
 
-    # Ejecutar un archivo docker-compose.yml
-    - name: Ejecutar docker-compose.yml
-      command: docker-compose up -d
+    - name: Detener contenedores existentes (si existen)
+      shell: docker compose down
       args:
-        chdir: /home/{{ ansible_user }}/
-      become_user: "{{ ansible_user }}"
-      become_method: su
+        chdir: /home/{{ ansible_user }}/devops
+      ignore_errors: yes
 
-    - name: Instalar plugins jenkins
-      command: docker exec -it jenkins jenkins-plugin-cli --plugin-file /plugins.txt
-      become_user: "{{ ansible_user }}"
+    - name: Reiniciar Docker daemon
+      systemd:
+        name: docker
+        state: restarted
+
+    - name: Esperar a que Docker esté listo
+      pause:
+        seconds: 5
+
+    - name: Levantar servicios con Docker Compose (como root)
+      shell: docker compose up -d
+      args:
+        chdir: /home/{{ ansible_user }}/devops
+      become: yes
+      become_user: root
+
+    - name: Esperar a que Jenkins esté disponible
+      wait_for:
+        port: 8080
+        delay: 10
+        timeout: 300
+
+    - name: Esperar a que SonarQube esté disponible
+      wait_for:
+        port: 9000
+        delay: 10
+        timeout: 300
+
+    - name: Mostrar mensaje de éxito
+      debug:
+        msg:
+          - "=========================================="
+          - "✅ CONFIGURACIÓN COMPLETADA EXITOSAMENTE"
+          - "=========================================="
+          - "Jenkins: http://130.131.233.231:8080"
+          - "SonarQube: http://130.131.233.231:9000"
+          - "PostgreSQL: 130.131.233.231:5432"
+          - ""
+          - "Credenciales SonarQube por defecto:"
+          - "  Usuario: admin"
+          - "  Password: admin"
+          - ""
+          - "Para obtener password de Jenkins:"
+          - "  ssh adminuser@130.131.233.231"
+          - "  docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword"
+          - "=========================================="
       become_method: su
       notify: restart jenkins
 
